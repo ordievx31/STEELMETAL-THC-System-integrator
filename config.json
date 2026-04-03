@@ -32,12 +32,10 @@
   "update": {
     "enabled": true,
     "currentVersion": "1.0.25",
-    "mode": "local-workspace",
-    "workspaceDir": ".",
+    "repo": "ordievx31/STEELMETTLE-THC-System-integrator",
+    "assetNamePattern": "STEELMETTLE-THC-Systems-Integrator-Installer.exe",
     "autoCheckOnLaunch": true,
-    "autoSync": true,
-    "checkIntervalSeconds": 0,
-    "cacheHashFile": "logs/workspace_file_hashes.json"
+    "checkIntervalSeconds": 0
   },
   "security": {
     "enabled": true,
