@@ -1,0 +1,113 @@
+{
+  "stm32": {
+    "firmwareBinary": "STM32/STM32MX_V2.bin",
+    "buildDir": "STM32/Debug",
+    "ai": {
+      "enabled": true,
+      "predictEnable": true,
+      "predictWindowSize": 10,
+      "learningRate": 0.1,
+      "thresholdV": 5.0,
+      "confidenceMin": 0.7
+    }
+  },
+  "arduino": {
+    "sketchDir": "Arduino",
+    "fqbn": "arduino:avr:uno"
+  },
+  "pokeys": {
+    "macroFile": "PoKeys/POKEYS_POEXT_MACROS_CLEAN.txt"
+  },
+  "sync": {
+    "enabled": true,
+    "arduinoSourceDir": "..\\Arduino\\THC_AUTOSET_Firmware",
+    "stm32SourceBin": "..\\STM32MX_V3.0.1\\Debug\\STM32MX_V2.bin",
+    "stm32SourceConfigHeader": "..\\STM32MX_V3.0.1\\Core\\Inc\\THC_Config.h",
+    "pokeysMacroSourceFile": "..\\Arduino\\THC_AUTOSET_Firmware\\POKEYS_POEXT_MACROS_CLEAN.txt"
+  },
+  "ui": {
+    "splashImage": "assets/SteelMettle-background.jpg",
+    "forgeScreenImage": "assets/SteelMettle-background.jpg"
+  },
+  "update": {
+    "enabled": true,
+    "currentVersion": "1.0.25",
+    "mode": "local-workspace",
+    "workspaceDir": ".",
+    "autoCheckOnLaunch": true,
+    "autoSync": true,
+    "checkIntervalSeconds": 0,
+    "cacheHashFile": "logs/workspace_file_hashes.json"
+  },
+  "security": {
+    "enabled": true,
+    "requireConfirmation": true,
+    "userLicenseFile": "licenses/user.license.json",
+    "devLicenseFile": "licenses/dev.license.json",
+    "forgeLockCommand": "STM32_Programmer_CLI.exe -c port=SWD -ob RDP=1",
+    "coreLockCommand": "avrdude -p atmega328p -c arduino -P {PORT} -b 115200 -U lock:w:0x0C:m"
+  },
+  "firmwareUpdate": {
+    "checkOnConnect": false,
+    "checkOnLaunch": false,
+    "autoSync": true,
+    "forge": {
+      "enabled": true,
+      "repo": "ordievx31/STEELMETTLE-THC-Forge-Firmware",
+      "branch": "main",
+      "sourceDir": "..\\STM32MX_V3.0.1",
+      "watchFiles": ["Core/Src/**/*.c", "Core/Inc/**/*.h"],
+      "buildArtifact": "STM32MX_V2.bin",
+      "currentVersion": "3.0.2"
+    },
+    "core": {
+      "enabled": true,
+      "repo": "ordievx31/THC-AUTOSET-Firmware",
+      "branch": "main",
+      "sourceDir": "..\\Arduino\\THC_AUTOSET_Firmware",
+      "watchFiles": ["*.cpp", "*.h", "*.ino"],
+      "buildArtifact": "THC_AUTOSET_Firmware.hex",
+      "currentVersion": "1.0.1"
+    }
+  },
+  "fileMonitoring": {
+    "enabled": true,
+    "checkIntervalSeconds": 60,
+    "hashCheckFile": "logs/file_hashes.json",
+    "watches": [
+      {
+        "label": "STM32 Firmware",
+        "sourceDir": "..\\STM32MX_V3.0.1",
+        "targetDir": "STM32",
+        "patterns": ["Core/Src/**/*.c", "Core/Inc/**/*.h", "Core/Inc/main.h"],
+        "syncOnChange": true
+      },
+      {
+        "label": "Arduino Firmware",
+        "sourceDir": "..\\Arduino\\THC_AUTOSET_Firmware",
+        "targetDir": "Arduino",
+        "patterns": ["*.ino", "*.cpp", "*.h"],
+        "syncOnChange": true
+      },
+      {
+        "label": "Documentation",
+        "sourceDir": "..\\STM32MX_V3.0.1",
+        "targetDir": "docs/STM32",
+        "patterns": ["**/*.md"],
+        "syncOnChange": false
+      },
+      {
+        "label": "Arduino Documentation",
+        "sourceDir": "..\\Arduino\\THC_AUTOSET_Firmware",
+        "targetDir": "docs/Arduino",
+        "patterns": ["**/*.md", "SHOP_CARD*.md"],
+        "syncOnChange": false
+      }
+    ]
+  },
+  "githubAuth": {
+    "enabled": true,
+    "tokenEnvVar": "STEELMETTLE_GITHUB_TOKEN",
+    "tokenFile": "secrets/github.token"
+  }
+}
