@@ -12,8 +12,8 @@
     }
   },
   "arduino": {
-    "sketchDir": "Arduino",
-    "fqbn": "arduino:avr:uno"
+    "sketchDir": "Arduino\\THC_AUTOSET_Firmware",
+    "fqbn": "arduino:avr:mega"
   },
   "pokeys": {
     "macroFile": "PoKeys/POKEYS_POEXT_MACROS_CLEAN.txt"
@@ -31,7 +31,7 @@
   },
   "update": {
     "enabled": true,
-    "currentVersion": "1.0.26",
+    "currentVersion": "1.0.27",
     "repo": "ordievx31/STEELMETTLE-THC-System-integrator",
     "assetNamePattern": "STEELMETTLE-THC-Systems-Integrator-Installer.exe",
     "autoCheckOnLaunch": true,
@@ -43,7 +43,9 @@
     "userLicenseFile": "licenses/user.license.json",
     "devLicenseFile": "licenses/dev.license.json",
     "forgeLockCommand": "STM32_Programmer_CLI.exe -c port=SWD -ob RDP=1",
-    "coreLockCommand": "avrdude -p atmega328p -c arduino -P {PORT} -b 115200 -U lock:w:0x0C:m"
+    "enforcePendingLocksOnExit": false,
+    "commandTimeoutSeconds": 45,
+    "coreLockCommand": "tools\\avrdude.cmd -p atmega2560 -c wiring -P {PORT} -b 115200 -D -U lock:w:0xCF:m"
   },
   "firmwareUpdate": {
     "checkOnConnect": false,

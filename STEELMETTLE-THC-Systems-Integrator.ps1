@@ -239,6 +239,12 @@ function Get-PendingLockTargets {
 
 function Test-PendingDevLocksRequireAction {
     if (-not $script:devModeUnlocked) { return $false }
+
+    $sec = Get-SecurityConfig
+    if ($null -ne $sec.enforcePendingLocksOnExit -and -not $sec.enforcePendingLocksOnExit) {
+        return $false
+    }
+
     return ((Get-PendingLockTargets).Count -gt 0)
 }
 
@@ -469,12 +475,14 @@ function Get-UpdateConfig {
 function Get-SecurityConfig {
     $s = if ($config -and $config.security) { $config.security } else { $null }
     return @{
-        enabled             = if ($s -and $null -ne $s.enabled) { [bool]$s.enabled } else { $false }
-        requireConfirmation = if ($s -and $null -ne $s.requireConfirmation) { [bool]$s.requireConfirmation } else { $true }
-        userLicenseFile     = if ($s -and $s.userLicenseFile) { [string]$s.userLicenseFile } else { 'licenses/user.license.json' }
-        devLicenseFile      = if ($s -and $s.devLicenseFile) { [string]$s.devLicenseFile } else { 'licenses/dev.license.json' }
-        forgeLockCommand    = if ($s -and $s.forgeLockCommand) { [string]$s.forgeLockCommand } else { '' }
-        coreLockCommand     = if ($s -and $s.coreLockCommand) { [string]$s.coreLockCommand } else { '' }
+        enabled                   = if ($s -and $null -ne $s.enabled) { [bool]$s.enabled } else { $false }
+        requireConfirmation       = if ($s -and $null -ne $s.requireConfirmation) { [bool]$s.requireConfirmation } else { $true }
+        enforcePendingLocksOnExit = if ($s -and $null -ne $s.enforcePendingLocksOnExit) { [bool]$s.enforcePendingLocksOnExit } else { $true }
+        commandTimeoutSeconds     = if ($s -and $null -ne $s.commandTimeoutSeconds) { [int]$s.commandTimeoutSeconds } else { 45 }
+        userLicenseFile           = if ($s -and $s.userLicenseFile) { [string]$s.userLicenseFile } else { 'licenses/user.license.json' }
+        devLicenseFile            = if ($s -and $s.devLicenseFile) { [string]$s.devLicenseFile } else { 'licenses/dev.license.json' }
+        forgeLockCommand          = if ($s -and $s.forgeLockCommand) { [string]$s.forgeLockCommand } else { '' }
+        coreLockCommand           = if ($s -and $s.coreLockCommand) { [string]$s.coreLockCommand } else { '' }
     }
 }
 
@@ -1156,17 +1164,66 @@ function Download-And-RunAppUpdate {
 function Invoke-ConfiguredCommand {
     param(
         [string]$CommandLine,
-        [string]$LogFileName
+        [string]$LogFileName,
+        [int]$TimeoutSeconds = 45
     )
 
     if ([string]::IsNullOrWhiteSpace($CommandLine)) {
         throw 'Command is not configured.'
     }
 
+    $effectiveTimeout = if ($TimeoutSeconds -gt 0) { $TimeoutSeconds } else { 45 }
+    $resolvedCommandLine = Resolve-ConfiguredCommandLine $CommandLine
     $logFile = Join-Path $logDir $LogFileName
-    cmd /c $CommandLine 2>&1 | Tee-Object -FilePath $logFile | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Command failed with exit code $LASTEXITCODE"
+    $tmpStdOut = Join-Path $env:TEMP ("smt-cmd-out-" + [guid]::NewGuid().ToString('N') + '.log')
+    $tmpStdErr = Join-Path $env:TEMP ("smt-cmd-err-" + [guid]::NewGuid().ToString('N') + '.log')
+
+    Log "Executing configured command: $resolvedCommandLine"
+    Push-Location $baseDir
+    try {
+        $proc = Start-Process -FilePath 'cmd.exe' `
+            -ArgumentList @('/c', $resolvedCommandLine) `
+            -WorkingDirectory $baseDir `
+            -RedirectStandardOutput $tmpStdOut `
+            -RedirectStandardError $tmpStdErr `
+            -NoNewWindow `
+            -PassThru
+
+        $deadline = (Get-Date).AddSeconds($effectiveTimeout)
+        while (-not $proc.HasExited) {
+            if ((Get-Date) -ge $deadline) {
+                try { $proc.Kill() } catch {}
+                $timeoutMessage = "Command timed out after $effectiveTimeout second(s). Check the device connection and COM port, then retry."
+                Add-Content -Path $logFile -Value $timeoutMessage
+                throw $timeoutMessage
+            }
+            try { [System.Windows.Forms.Application]::DoEvents() } catch {}
+            Start-Sleep -Milliseconds 100
+        }
+
+        $proc.WaitForExit()
+        $stdOut = if (Test-Path $tmpStdOut) { Get-Content -Path $tmpStdOut -Raw -ErrorAction SilentlyContinue } else { '' }
+        $stdErr = if (Test-Path $tmpStdErr) { Get-Content -Path $tmpStdErr -Raw -ErrorAction SilentlyContinue } else { '' }
+        $combined = (($stdOut, $stdErr | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [Environment]::NewLine).Trim()
+
+        if ([string]::IsNullOrWhiteSpace($combined)) {
+            Set-Content -Path $logFile -Value '' -Encoding UTF8
+        } else {
+            Set-Content -Path $logFile -Value $combined -Encoding UTF8
+        }
+
+        if ($proc.ExitCode -ne 0) {
+            $tail = if (Test-Path $logFile) { ((Get-Content -Path $logFile -Tail 8 -ErrorAction SilentlyContinue) -join [Environment]::NewLine).Trim() } else { '' }
+            if ([string]::IsNullOrWhiteSpace($tail)) {
+                throw "Command failed with exit code $($proc.ExitCode)"
+            }
+            throw "Command failed with exit code $($proc.ExitCode): $tail"
+        }
+    } finally {
+        foreach ($tmpFile in @($tmpStdOut, $tmpStdErr)) {
+            if (Test-Path $tmpFile) { Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue }
+        }
+        Pop-Location
     }
 }
 
@@ -1196,7 +1253,12 @@ function Apply-ProductionLock {
         $cmd = $cmd.Replace('{PORT}', $port)
     }
 
-    Invoke-ConfiguredCommand -CommandLine $cmd -LogFileName ("security-lock-" + $Target.ToLower() + ".log")
+    $timeoutSeconds = 45
+    if ($sec.PSObject.Properties['commandTimeoutSeconds'] -and [int]$sec.commandTimeoutSeconds -gt 0) {
+        $timeoutSeconds = [int]$sec.commandTimeoutSeconds
+    }
+
+    Invoke-ConfiguredCommand -CommandLine $cmd -LogFileName ("security-lock-" + $Target.ToLower() + ".log") -TimeoutSeconds $timeoutSeconds
     Clear-TargetPendingLock -Target $Target
     Log "$Target production lock command executed successfully."
 }
@@ -1319,7 +1381,7 @@ function Sync-IntegratorPayload {
     $syncedCount = 0
 
     # Sync Arduino firmware only if source has changed
-    $arduinoDst = Join-Path $baseDir 'Arduino'
+    $arduinoDst = Join-Path $baseDir 'Arduino\THC_AUTOSET_Firmware'
     if (Test-Path $sync.arduinoSourceDir) {
         if (-not (Test-Path $arduinoDst)) { New-Item -ItemType Directory -Path $arduinoDst | Out-Null }
 
@@ -1433,6 +1495,74 @@ function Find-Executable($name) {
         if (Test-Path $path) { return (Resolve-Path $path).Path }
     }
     return $null
+}
+
+function Find-CommandExecutable([string]$name) {
+    if ([string]::IsNullOrWhiteSpace($name)) {
+        return $null
+    }
+
+    $candidateNames = [System.Collections.Generic.List[string]]::new()
+    $candidateNames.Add($name)
+    if (-not $name.EndsWith('.exe', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $candidateNames.Add($name + '.exe')
+    }
+
+    foreach ($candidate in $candidateNames) {
+        $found = Find-Executable $candidate
+        if ($found) {
+            return $found
+        }
+
+        try {
+            $cmd = Get-Command $candidate -CommandType Application -ErrorAction Stop | Select-Object -First 1
+            if ($cmd -and $cmd.Source) { return $cmd.Source }
+            if ($cmd -and $cmd.Path) { return $cmd.Path }
+        } catch {}
+    }
+
+    if ($candidateNames -contains 'avrdude.exe') {
+        $avrdudePatterns = @(
+            (Join-Path $env:LOCALAPPDATA 'Arduino15\packages\arduino\tools\avrdude\*\bin\avrdude.exe'),
+            (Join-Path $env:APPDATA 'Arduino15\packages\arduino\tools\avrdude\*\bin\avrdude.exe'),
+            (Join-Path $env:ProgramFiles 'Arduino\hardware\tools\avr\bin\avrdude.exe'),
+            (Join-Path ${env:ProgramFiles(x86)} 'Arduino\hardware\tools\avr\bin\avrdude.exe')
+        )
+
+        foreach ($pattern in $avrdudePatterns) {
+            $match = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+            if ($match) {
+                return $match.FullName
+            }
+        }
+    }
+
+    return $null
+}
+
+function Resolve-ConfiguredCommandLine([string]$CommandLine) {
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+        return $CommandLine
+    }
+
+    $trimmed = $CommandLine.Trim()
+    if ($trimmed -notmatch '^(?:"([^"]+)"|([^\s]+))(.*)$') {
+        return $CommandLine
+    }
+
+    $exeToken = if ($matches[1]) { $matches[1] } else { $matches[2] }
+    $remainder = $matches[3]
+
+    if ([System.IO.Path]::IsPathRooted($exeToken) -or $exeToken -match '[\\/]') {
+        return $CommandLine
+    }
+
+    $resolvedExe = Find-CommandExecutable $exeToken
+    if ($resolvedExe) {
+        return ('"{0}"{1}' -f $resolvedExe, $remainder)
+    }
+
+    return $CommandLine
 }
 
 function Get-SerialPorts() {
@@ -1690,7 +1820,7 @@ public class TaskbarAppId {
     if ($uiCfg.splashImage -and (Test-Path $uiCfg.splashImage)) {
         try {
             $form.BackgroundImage = [System.Drawing.Image]::FromFile($uiCfg.splashImage)
-            $form.BackgroundImageLayout = [System.Windows.Forms.ImageLayout]::Zoom
+            $form.BackgroundImageLayout = [System.Windows.Forms.ImageLayout]::Stretch
         } catch {
             Log "WARNING: Failed to load splash image: $($uiCfg.splashImage)"
         }
@@ -1796,7 +1926,7 @@ public class TaskbarAppId {
     if ($uiCfg.forgeScreenImage -and (Test-Path $uiCfg.forgeScreenImage)) {
         try {
             $panelStm32Step2.BackgroundImage = [System.Drawing.Image]::FromFile($uiCfg.forgeScreenImage)
-            $panelStm32Step2.BackgroundImageLayout = [System.Windows.Forms.ImageLayout]::Zoom
+            $panelStm32Step2.BackgroundImageLayout = [System.Windows.Forms.ImageLayout]::Stretch
         } catch {
             Log "WARNING: Failed to load Forge screen background: $($uiCfg.forgeScreenImage)"
         }
@@ -2157,7 +2287,18 @@ public class TaskbarAppId {
         }
 
         Set-UiProgress "Applying $target production lock..." 80
-        Apply-ProductionLock -Target $target
+        try {
+            Apply-ProductionLock -Target $target
+        } catch {
+            $logPath = Join-Path $logDir ("security-lock-" + $target.ToLower() + ".log")
+            $logText = if (Test-Path $logPath) { Get-Content -Path $logPath -Raw -ErrorAction SilentlyContinue } else { '' }
+            $lockVerified = $logText -match '(?im)1\s+verified' -and $logText -match '(?im)^Avrdude done\.'
+            if ($lockVerified) {
+                Log "$target production lock completed successfully despite a host-side exception being raised."
+            } else {
+                throw
+            }
+        }
         Set-UiProgress "$target production lock applied." 100
     }
 
@@ -2811,22 +2952,31 @@ function Build-And-Flash-Arduino {
     $fqbn = if ($config -and $config.arduino -and $config.arduino.fqbn) { $config.arduino.fqbn } else { 'arduino:avr:uno' }
 
     # Decode sketch sources if they were encoded for distribution (SMTFW: prefix)
+    $tempSketchRoot = $null
     $tempSketchDir = $null
     $buildSketchDir = $sketchDir
     $sampleIno = Get-ChildItem $sketchDir -Filter '*.ino' -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($sampleIno) {
         $inoContent = Get-Content $sampleIno.FullName -Raw -ErrorAction SilentlyContinue
         if ($inoContent -and $inoContent.TrimStart().StartsWith('SMTFW:')) {
-                Log 'Encoded Arduino sketch detected - decoding payload for flash.'
-            $tempSketchDir = Join-Path $env:TEMP "smt_sketch_$(Get-Random)"
-            New-Item -ItemType Directory -Path $tempSketchDir | Out-Null
-            Get-ChildItem $sketchDir -File | ForEach-Object {
+            Log 'Encoded Arduino sketch detected - decoding payload for flash.'
+            $tempSketchRoot = Join-Path $env:TEMP "smt_sketch_$(Get-Random)"
+            $sketchFolderName = [System.IO.Path]::GetFileNameWithoutExtension($sampleIno.Name)
+            $tempSketchDir = Join-Path $tempSketchRoot $sketchFolderName
+            New-Item -ItemType Directory -Path $tempSketchDir -Force | Out-Null
+            Get-ChildItem $sketchDir -Recurse -File | ForEach-Object {
                 $fc = Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue
-                $dp = Join-Path $tempSketchDir $_.Name
+                $relativePath = $_.FullName.Substring($sketchDir.Length).TrimStart([char]'\', [char]'/')
+                $dp = Join-Path $tempSketchDir $relativePath
+                $dpDir = Split-Path $dp -Parent
+                if (-not (Test-Path $dpDir)) {
+                    New-Item -ItemType Directory -Path $dpDir -Force | Out-Null
+                }
                 if ($fc -and $fc.TrimStart().StartsWith('SMTFW:')) {
-                    Set-Content -Path $dp -Value (Get-DecodedFirmwareText $_.FullName) -Encoding UTF8
+                    $decodedText = Get-DecodedFirmwareText $_.FullName
+                    [System.IO.File]::WriteAllText($dp, $decodedText, (New-Object System.Text.UTF8Encoding($false)))
                 } else {
-                    Copy-Item $_.FullName $dp
+                    Copy-Item $_.FullName $dp -Force
                 }
             }
             $buildSketchDir = $tempSketchDir
@@ -2836,7 +2986,17 @@ function Build-And-Flash-Arduino {
     try {
         Log "Compiling STEELMETTLE THC Core sketch in $sketchDir (board $fqbn)"
         Set-UiStage 'Compiling STEELMETTLE THC Core firmware...' 70
-        & $arduino compile --fqbn $fqbn $buildSketchDir 2>&1 | Tee-Object -FilePath (Join-Path $logDir 'build-arduino.log')
+        $prevEap = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            & $arduino compile --fqbn $fqbn $buildSketchDir 2>&1 | Tee-Object -FilePath (Join-Path $logDir 'build-arduino.log')
+            $compileExit = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $prevEap
+        }
+        if ($compileExit -ne 0) {
+            throw "Arduino compile failed with exit code $compileExit"
+        }
 
         if (-not $ComPort) {
             $detected = Detect-Device
@@ -2851,14 +3011,28 @@ function Build-And-Flash-Arduino {
 
         Log "Uploading to $ComPort"
         Set-UiStage "Found Core board on $ComPort, installing firmware..." 85
-        & $arduino upload -p $ComPort --fqbn $fqbn $buildSketchDir 2>&1 | Tee-Object -FilePath (Join-Path $logDir 'flash-arduino.log')
+        $prevEap = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            & $arduino upload -p $ComPort --fqbn $fqbn $buildSketchDir 2>&1 | Tee-Object -FilePath (Join-Path $logDir 'flash-arduino.log')
+            $uploadExit = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $prevEap
+        }
+        if ($uploadExit -ne 0) {
+            throw "Arduino upload failed with exit code $uploadExit"
+        }
         if ($script:devModeUnlocked) {
             Mark-TargetPendingLock -Target 'Core'
         }
         Log 'STEELMETTLE THC Core upload complete.'
         Set-UiStage 'STEELMETTLE THC Core firmware install complete.' 100
     } finally {
-        if ($tempSketchDir) { Remove-Item $tempSketchDir -Recurse -Force -ErrorAction SilentlyContinue }
+        if ($tempSketchRoot) {
+            Remove-Item $tempSketchRoot -Recurse -Force -ErrorAction SilentlyContinue
+        } elseif ($tempSketchDir) {
+            Remove-Item $tempSketchDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
