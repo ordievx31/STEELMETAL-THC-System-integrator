@@ -1,0 +1,218 @@
+# =============================================================================
+# LINUXCNC STEELMETTLE THC Feedrate Bus HAL Configuration
+# =============================================================================
+# This HAL file converts the real-time feedrate from LinuxCNC's motion planner
+# into an 8-bit parallel output (8 data pins + 1 strobe) for the STEELMETTLE
+# THC Arduino to latch via ISR.
+#
+# INSTALLATION:
+# 1. Copy this file to your LinuxCNC machine config directory:
+#    ~/linuxcnc/configs/[your-machine]/steelmettle_thc_feedrate.hal
+#
+# 2. Add this line to your main HAL file or custom_postgui.hal:
+#    source steelmettle_thc_feedrate.hal
+#
+# 3. Edit the PIN ASSIGNMENTS section below to match your hardware
+#    (Mesa card GPIO pins or parallel port pins)
+#
+# 4. Set MAX_FEEDRATE to match your machine's maximum cutting feedrate
+#
+# SIGNAL FLOW:
+#   motion.current-vel -> scale (0-MAX to 0-255) -> conv_float_u32
+#   -> bitslice (u32 to 8 individual bits) -> GPIO output pins
+#   -> comp (change detect) -> oneshot (strobe pulse) -> strobe pin
+#
+# SUPPORTED HARDWARE:
+#   - Mesa 7i76e, 7i96, 5i25 (via hm2_eth or hm2_pci GPIO pins)
+#   - Parallel port (via hal_parport pins)
+#   - Any HAL-accessible digital output
+#
+# =============================================================================
+
+# =============================================================================
+# CONFIGURATION - EDIT THESE VALUES
+# =============================================================================
+
+# Maximum feedrate in machine units per second (not per minute!)
+# LinuxCNC motion.current-vel is in units/second
+# Example: if your max cutting feedrate is 500 mm/min = 8.333 mm/sec
+# Formula: MAX_FEEDRATE_UPS = max_feedrate_per_minute / 60
+# Adjust this to match your machine
+#
+# setp scale.0.gain  <calculated as 255/MAX_FEEDRATE_UPS>
+
+# =============================================================================
+# LOAD REALTIME COMPONENTS
+# =============================================================================
+
+# Scale: converts velocity (units/sec) to 0-255 range
+loadrt scale count=1
+
+# Float to unsigned-32 conversion
+loadrt conv_float_u32 count=1
+
+# Bitslice: splits u32 into individual bit outputs (8 bits)
+loadrt bitslice count=1 personality=8
+
+# Oneshot: generates strobe pulse on value change
+loadrt oneshot count=1
+
+# Comparator: detects when feedrate value changes
+loadrt comp count=1
+
+# =============================================================================
+# ADD FUNCTIONS TO SERVO THREAD
+# =============================================================================
+
+addf scale.0           servo-thread
+addf conv-float-u32.0  servo-thread
+addf bitslice.0        servo-thread
+addf comp.0            servo-thread
+addf oneshot.0         servo-thread
+
+# =============================================================================
+# SIGNAL ROUTING: Velocity -> 8-bit parallel output
+# =============================================================================
+
+# Step 1: Scale motion velocity to 0-255 range
+# motion.current-vel outputs in units/second
+# gain = 255 / max_feedrate_in_units_per_second
+#
+# EXAMPLE for 500 mm/min machine:
+#   500 mm/min = 8.333 mm/sec
+#   gain = 255 / 8.333 = 30.6
+#
+# EXAMPLE for 300 ipm machine:
+#   300 in/min = 5.0 in/sec
+#   gain = 255 / 5.0 = 51.0
+#
+# >>> EDIT THIS VALUE for your machine <<<
+setp scale.0.gain   30.6
+setp scale.0.offset  0.0
+
+net thc-vel-raw    motion.current-vel => scale.0.in
+
+# Step 2: Convert scaled float to unsigned integer
+net thc-vel-scaled scale.0.out => conv-float-u32.0.in
+
+# Step 3: Split integer into individual bits
+net thc-vel-u32    conv-float-u32.0.out => bitslice.0.in
+
+# Step 4: Change detection for strobe generation
+# Compare current value with a small hysteresis to detect changes
+setp comp.0.hyst 0.5
+net thc-vel-scaled => comp.0.in0
+setp comp.0.in1 -1.0
+
+# Step 5: Oneshot strobe pulse (2ms pulse width)
+setp oneshot.0.width 0.002
+setp oneshot.0.retriggerable 1
+net thc-vel-changed comp.0.out => oneshot.0.in
+
+# =============================================================================
+# PIN ASSIGNMENTS - ACTIVE ACTIVE ACTIVE
+# =============================================================================
+# >>> EDIT THESE to match your hardware <<<
+#
+# OPTION A: Mesa 7i76e (uncomment and edit pin numbers)
+# The hm2_xxxx prefix depends on your Mesa card. Use 'halcmd show pin' to find yours.
+# Common format: hm2_7i76e.0.gpio.0XX.out
+#
+# net thc-fd-bit0  bitslice.0.out-00 => hm2_7i76e.0.gpio.040.out
+# net thc-fd-bit1  bitslice.0.out-01 => hm2_7i76e.0.gpio.041.out
+# net thc-fd-bit2  bitslice.0.out-02 => hm2_7i76e.0.gpio.042.out
+# net thc-fd-bit3  bitslice.0.out-03 => hm2_7i76e.0.gpio.043.out
+# net thc-fd-bit4  bitslice.0.out-04 => hm2_7i76e.0.gpio.044.out
+# net thc-fd-bit5  bitslice.0.out-05 => hm2_7i76e.0.gpio.045.out
+# net thc-fd-bit6  bitslice.0.out-06 => hm2_7i76e.0.gpio.046.out
+# net thc-fd-bit7  bitslice.0.out-07 => hm2_7i76e.0.gpio.047.out
+# net thc-strobe   oneshot.0.out     => hm2_7i76e.0.gpio.048.out
+#
+# Don't forget to set pin direction to output:
+# setp hm2_7i76e.0.gpio.040.is_output 1
+# setp hm2_7i76e.0.gpio.041.is_output 1
+# setp hm2_7i76e.0.gpio.042.is_output 1
+# setp hm2_7i76e.0.gpio.043.is_output 1
+# setp hm2_7i76e.0.gpio.044.is_output 1
+# setp hm2_7i76e.0.gpio.045.is_output 1
+# setp hm2_7i76e.0.gpio.046.is_output 1
+# setp hm2_7i76e.0.gpio.047.is_output 1
+# setp hm2_7i76e.0.gpio.048.is_output 1
+
+# OPTION B: Parallel port (uncomment and edit pin numbers)
+# Parallel port pins 2-9 are outputs on most ports
+#
+# net thc-fd-bit0  bitslice.0.out-00 => parport.0.pin-02-out
+# net thc-fd-bit1  bitslice.0.out-01 => parport.0.pin-03-out
+# net thc-fd-bit2  bitslice.0.out-02 => parport.0.pin-04-out
+# net thc-fd-bit3  bitslice.0.out-03 => parport.0.pin-05-out
+# net thc-fd-bit4  bitslice.0.out-04 => parport.0.pin-06-out
+# net thc-fd-bit5  bitslice.0.out-05 => parport.0.pin-07-out
+# net thc-fd-bit6  bitslice.0.out-06 => parport.0.pin-08-out
+# net thc-fd-bit7  bitslice.0.out-07 => parport.0.pin-09-out
+# net thc-strobe   oneshot.0.out     => parport.0.pin-14-out
+#
+# Note: If using a second parallel port for THC:
+# loadrt hal_parport cfg="0x378 out 0xD010 out"
+# Replace parport.0 with parport.1 for the second port
+
+# =============================================================================
+# WIRING: LinuxCNC GPIO -> Arduino
+# =============================================================================
+# GPIO Output for D0  -> Arduino D3  (feedrate bit 0, LSB)
+# GPIO Output for D1  -> Arduino D4  (feedrate bit 1)
+# GPIO Output for D2  -> Arduino D5  (feedrate bit 2)
+# GPIO Output for D3  -> Arduino D6  (feedrate bit 3)
+# GPIO Output for D4  -> Arduino D7  (feedrate bit 4)
+# GPIO Output for D5  -> Arduino D8  (feedrate bit 5)
+# GPIO Output for D6  -> Arduino D9  (feedrate bit 6)
+# GPIO Output for D7  -> Arduino D10 (feedrate bit 7, MSB)
+# GPIO Output for STR -> Arduino D2  (strobe/interrupt, rising edge)
+# GND                 -> Arduino GND
+#
+# SIGNAL LEVELS:
+# Mesa cards output 3.3V logic - Arduino 5V-tolerant inputs read as HIGH
+# Parallel port outputs 5V logic - Arduino reads directly
+# If using 3.3V Mesa GPIO and experiencing unreliable reads, add a
+# 74HCT245 level shifter (3.3V -> 5V) between Mesa and Arduino
+
+# =============================================================================
+# FEEDRATE GAIN CALCULATION HELPER
+# =============================================================================
+# To calculate the correct scale.0.gain value:
+#
+# 1. Determine your max cutting feedrate in your machine units per minute
+#    Example: 500 mm/min or 300 in/min
+#
+# 2. Convert to units per second (divide by 60)
+#    500 mm/min / 60 = 8.333 mm/sec
+#    300 in/min / 60 = 5.0 in/sec
+#
+# 3. Calculate gain: 255 / (units per second)
+#    255 / 8.333 = 30.6   (for 500 mm/min)
+#    255 / 5.0   = 51.0   (for 300 in/min)
+#    255 / 3.333 = 76.5   (for 200 mm/min)
+#    255 / 16.67 = 15.3   (for 1000 mm/min)
+#
+# 4. Set the gain: setp scale.0.gain <your value>
+#
+# VERIFICATION:
+# After loading, use halcmd to check values:
+#   halcmd show pin motion.current-vel
+#   halcmd show pin scale.0.out
+#   halcmd show pin conv-float-u32.0.out
+#   halcmd show pin bitslice.0.out-*
+#   halcmd show pin oneshot.0.out
+
+# =============================================================================
+# TESTING
+# =============================================================================
+# 1. Load LinuxCNC with this HAL file included
+# 2. Open HAL Configuration viewer (Machine > HAL Configuration)
+# 3. Watch pins: scale.0.out, conv-float-u32.0.out, bitslice.0.out-*
+# 4. Jog or run G-code with known feedrate
+# 5. Verify bitslice outputs match expected binary:
+#    F=0 -> all bits 0 (byte=0)
+#    F=250mm/min -> byte ~128 (10000000)
+#    F=500mm/min -> byte=255 (11111111)
+# 6. Check Arduino serial output for matching feedrate byte

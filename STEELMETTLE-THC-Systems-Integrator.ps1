@@ -54,6 +54,50 @@ function Ensure-MachMacroModuleLoaded {
     return $script:machMacroModuleLoaded
 }
 
+# UCCNC macro installer helper
+$uccncMacroModulePath = Join-Path $baseDir 'UCCNCMacroInstaller.ps1'
+$script:uccncMacroModuleLoaded = $false
+if (Test-Path $uccncMacroModulePath) {
+    try {
+        . $uccncMacroModulePath
+        $script:uccncMacroModuleLoaded = $true
+    } catch {
+        try {
+            $uccncRaw = Get-Content -Path $uccncMacroModulePath -Raw -ErrorAction Stop
+            . ([scriptblock]::Create($uccncRaw))
+            $script:uccncMacroModuleLoaded = $true
+        } catch {
+            Write-Host "WARNING: Failed to load UCCNC macro helper: $_" -ForegroundColor Yellow
+        }
+    }
+}
+
+function Ensure-UCCNCMacroModuleLoaded {
+    return $script:uccncMacroModuleLoaded
+}
+
+# LinuxCNC exporter helper
+$linuxcncExporterPath = Join-Path $baseDir 'LinuxCNCExporter.ps1'
+$script:linuxcncExporterLoaded = $false
+if (Test-Path $linuxcncExporterPath) {
+    try {
+        . $linuxcncExporterPath
+        $script:linuxcncExporterLoaded = $true
+    } catch {
+        try {
+            $lcncRaw = Get-Content -Path $linuxcncExporterPath -Raw -ErrorAction Stop
+            . ([scriptblock]::Create($lcncRaw))
+            $script:linuxcncExporterLoaded = $true
+        } catch {
+            Write-Host "WARNING: Failed to load LinuxCNC exporter: $_" -ForegroundColor Yellow
+        }
+    }
+}
+
+function Ensure-LinuxCNCExporterLoaded {
+    return $script:linuxcncExporterLoaded
+}
+
 function ConvertTo-CompatiblePsObject($value) {
     if ($null -eq $value) { return $null }
 
@@ -2339,11 +2383,22 @@ public class TaskbarAppId {
         Set-UiProgress "$target production lock applied." 100
     }
 
+    # =========================================================================
+    # SECTION: Firmware Upload & Tuning
+    # =========================================================================
+    $lblFirmware = New-Object System.Windows.Forms.Label
+    $lblFirmware.Text = 'FIRMWARE UPLOAD & TUNING'
+    $lblFirmware.Location = [System.Drawing.Point]::new(0, 4)
+    $lblFirmware.Size = [System.Drawing.Size]::new(700, 20)
+    $lblFirmware.ForeColor = $textSecondary
+    $lblFirmware.Font = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Bold)
+    $panelHome.Controls.Add($lblFirmware)
+
     $btnAuto = New-Object System.Windows.Forms.Button
-    $btnAuto.Text = 'Auto-Detect & Run'
-    $btnAuto.Width = 342
+    $btnAuto.Text = 'Auto-Detect & Flash'
+    $btnAuto.Width = 700
     $btnAuto.Height = 46
-    $btnAuto.Location = [System.Drawing.Point]::new(22, 16)
+    $btnAuto.Location = [System.Drawing.Point]::new(0, 24)
     Style-ActionButton $btnAuto
     $btnAuto.Add_Click({
         try {
@@ -2359,7 +2414,7 @@ public class TaskbarAppId {
     $btnSTM.Text = 'Open STEELMETTLE Forge: AI-Tuning Control'
     $btnSTM.Width = 342
     $btnSTM.Height = 46
-    $btnSTM.Location = [System.Drawing.Point]::new(380, 16)
+    $btnSTM.Location = [System.Drawing.Point]::new(0, 74)
     Style-ActionButton $btnSTM
     $btnSTM.Add_Click({
         try {
@@ -2374,7 +2429,7 @@ public class TaskbarAppId {
     $btnArduino.Text = 'Upload STEELMETTLE THC Core'
     $btnArduino.Width = 342
     $btnArduino.Height = 46
-    $btnArduino.Location = [System.Drawing.Point]::new(22, 76)
+    $btnArduino.Location = [System.Drawing.Point]::new(358, 74)
     Style-ActionButton $btnArduino
     $btnArduino.Add_Click({
         try {
@@ -2390,10 +2445,10 @@ public class TaskbarAppId {
     $panelHome.Controls.Add($btnArduino)
 
     $btnPokeys = New-Object System.Windows.Forms.Button
-    $btnPokeys.Text = 'Deploy PoKeys'
+    $btnPokeys.Text = 'Deploy PoKeys57CNC'
     $btnPokeys.Width = 342
-    $btnPokeys.Height = 46
-    $btnPokeys.Location = [System.Drawing.Point]::new(380, 76)
+    $btnPokeys.Height = 42
+    $btnPokeys.Location = [System.Drawing.Point]::new(0, 152)
     Style-ActionButton $btnPokeys
     $btnPokeys.Add_Click({
         try {
@@ -2407,13 +2462,23 @@ public class TaskbarAppId {
     })
     $panelHome.Controls.Add($btnPokeys)
 
+    # =========================================================================
+    # SECTION: CNC Macro & Config Deployment
+    # =========================================================================
+    $lblMacros = New-Object System.Windows.Forms.Label
+    $lblMacros.Text = 'CNC MACRO & CONFIG DEPLOYMENT'
+    $lblMacros.Location = [System.Drawing.Point]::new(0, 132)
+    $lblMacros.Size = [System.Drawing.Size]::new(700, 20)
+    $lblMacros.ForeColor = $textSecondary
+    $lblMacros.Font = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Bold)
+    $panelHome.Controls.Add($lblMacros)
+
     $btnMachMacro = New-Object System.Windows.Forms.Button
-    $btnMachMacro.Text = 'Install Mach3/Mach4 Feedrate Macros'
-    $btnMachMacro.Width = 700
-    $btnMachMacro.Height = 46
-    $btnMachMacro.Location = [System.Drawing.Point]::new(0, 136)
+    $btnMachMacro.Text = 'Mach3 / Mach4'
+    $btnMachMacro.Width = 342
+    $btnMachMacro.Height = 42
+    $btnMachMacro.Location = [System.Drawing.Point]::new(358, 152)
     Style-ActionButton $btnMachMacro
-    $btnMachMacro.BackColor = $accentOlive
     $btnMachMacro.Add_Click({
         try {
             if (-not (Ensure-MachMacroModuleLoaded)) {
@@ -2524,11 +2589,95 @@ public class TaskbarAppId {
     })
     $panelHome.Controls.Add($btnMachMacro)
 
+    $btnUCCNC = New-Object System.Windows.Forms.Button
+    $btnUCCNC.Text = 'UCCNC'
+    $btnUCCNC.Width = 342
+    $btnUCCNC.Height = 42
+    $btnUCCNC.Location = [System.Drawing.Point]::new(0, 198)
+    Style-ActionButton $btnUCCNC
+    $btnUCCNC.Add_Click({
+        try {
+            if (-not (Ensure-UCCNCMacroModuleLoaded)) {
+                Set-UiProgress 'UCCNC macro helper unavailable.' 100
+                return
+            }
+            Set-UiProgress 'Detecting UCCNC installation...' 30
+            $result = Install-UCCNCFeedrateMacro
+            if ($result.Success) {
+                Set-UiProgress "UCCNC deployed: $($result.Message)" 100
+            } else {
+                Set-UiProgress "UCCNC: $($result.Message)" 100
+            }
+        } catch {
+            Set-UiProgress "Error: $_" 100
+        }
+    })
+    $panelHome.Controls.Add($btnUCCNC)
+
+    $btnLinuxCNC = New-Object System.Windows.Forms.Button
+    $btnLinuxCNC.Text = 'LinuxCNC (Mesa / Parport)'
+    $btnLinuxCNC.Width = 342
+    $btnLinuxCNC.Height = 42
+    $btnLinuxCNC.Location = [System.Drawing.Point]::new(358, 198)
+    Style-ActionButton $btnLinuxCNC
+    $btnLinuxCNC.Add_Click({
+        try {
+            if (-not (Ensure-LinuxCNCExporterLoaded)) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    'LinuxCNC exporter could not be loaded.',
+                    'LinuxCNC Exporter Unavailable',
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Warning
+                ) | Out-Null
+                return
+            }
+            Set-UiProgress 'Exporting LinuxCNC HAL configuration...' 50
+            $result = Export-LinuxCNCFeedrateBus
+            if ($result.Success) {
+                Set-UiProgress "LinuxCNC HAL exported: $($result.ExportPath)" 100
+            } else {
+                Set-UiProgress "LinuxCNC: $($result.Message)" 100
+            }
+        } catch {
+            Set-UiProgress "Error: $_" 100
+        }
+    })
+    $panelHome.Controls.Add($btnLinuxCNC)
+
+    $btnCentroid = New-Object System.Windows.Forms.Button
+    $btnCentroid.Text = 'Centroid Acorn (Reference)'
+    $btnCentroid.Width = 342
+    $btnCentroid.Height = 42
+    $btnCentroid.Location = [System.Drawing.Point]::new(0, 244)
+    Style-ActionButton $btnCentroid
+    $btnCentroid.Add_Click({
+        try {
+            $refFile = Join-Path (Join-Path $baseDir 'PoKeys') 'CENTROID_FEEDRATE_THC_REFERENCE.txt'
+            if (Test-Path $refFile) {
+                Start-Process notepad.exe $refFile
+                Set-UiProgress 'Centroid Acorn reference opened in Notepad.' 100
+            } else {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "Centroid reference file not found:`n`n$refFile",
+                    'STEELMETTLE THC: File Missing',
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Warning
+                ) | Out-Null
+            }
+        } catch {
+            Set-UiProgress "Error: $_" 100
+        }
+    })
+    $panelHome.Controls.Add($btnCentroid)
+
+    # =========================================================================
+    # SECTION: System
+    # =========================================================================
     $btnUpdate = New-Object System.Windows.Forms.Button
     $btnUpdate.Text = 'Check for Updates (App & Firmware)'
-    $btnUpdate.Width = 700
-    $btnUpdate.Height = 46
-    $btnUpdate.Location = [System.Drawing.Point]::new(0, 182)
+    $btnUpdate.Width = 342
+    $btnUpdate.Height = 42
+    $btnUpdate.Location = [System.Drawing.Point]::new(358, 244)
     Style-ActionButton $btnUpdate
     $btnUpdate.BackColor = $accentOlive
     $btnUpdate.Add_Click({
@@ -2546,8 +2695,8 @@ public class TaskbarAppId {
     $btnLockCore = New-Object System.Windows.Forms.Button
     $btnLockCore.Text = 'Apply STEELMETTLE THC Core Production Lock'
     $btnLockCore.Width = 700
-    $btnLockCore.Height = 46
-    $btnLockCore.Location = [System.Drawing.Point]::new(0, 228)
+    $btnLockCore.Height = 42
+    $btnLockCore.Location = [System.Drawing.Point]::new(0, 292)
     Style-ActionButton $btnLockCore
     $btnLockCore.BackColor = $accentCopper
     $btnLockCore.Add_Click({
@@ -2586,7 +2735,7 @@ public class TaskbarAppId {
     $btnDevAccess.Text = '- Developer Access -'
     $btnDevAccess.Width = 700
     $btnDevAccess.Height = 26
-    $btnDevAccess.Location = [System.Drawing.Point]::new(0, 352)
+    $btnDevAccess.Location = [System.Drawing.Point]::new(0, 376)
     $btnDevAccess.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
     $btnDevAccess.FlatAppearance.BorderSize = 0
     $btnDevAccess.BackColor = $accentCopper
@@ -2800,24 +2949,36 @@ public class TaskbarAppId {
         $panelStm32Step1.SetBounds($contentLeft, $panelTop, $contentWidth, $panelHeight)
         $panelStm32Step2.SetBounds($contentLeft, $panelTop, $contentWidth, $panelHeight)
 
-        $homeScaleY = [double]$panelHome.ClientSize.Height / 390.0
+        $homeScaleY = [double]$panelHome.ClientSize.Height / 410.0
         $colGap = 16
         $colWidth = [int](($panelHome.ClientSize.Width - $colGap) / 2)
         $homePrimaryH = [int][Math]::Max(34, [Math]::Round(46 * $homeScaleY))
+        $homeMacroH = [int][Math]::Max(30, [Math]::Round(42 * $homeScaleY))
         $homeCompactH = [int][Math]::Max(24, [Math]::Round(34 * $homeScaleY))
         $homeDevH = [int][Math]::Max(20, [Math]::Round(26 * $homeScaleY))
-
-        $btnAuto.SetBounds(0, [int][Math]::Round(16 * $homeScaleY), $colWidth, $homePrimaryH)
-        $btnSTM.SetBounds($colWidth + $colGap, [int][Math]::Round(16 * $homeScaleY), $colWidth, $homePrimaryH)
-        $btnArduino.SetBounds(0, [int][Math]::Round(76 * $homeScaleY), $colWidth, $homePrimaryH)
-        $btnPokeys.SetBounds($colWidth + $colGap, [int][Math]::Round(76 * $homeScaleY), $colWidth, $homePrimaryH)
+        $homeLabelH = [int][Math]::Max(16, [Math]::Round(20 * $homeScaleY))
 
         $fullHomeWidth = $panelHome.ClientSize.Width
-        $btnMachMacro.SetBounds(0, [int][Math]::Round(136 * $homeScaleY), $fullHomeWidth, $homePrimaryH)
-        $btnUpdate.SetBounds(0, [int][Math]::Round(182 * $homeScaleY), $fullHomeWidth, $homePrimaryH)
-        $btnLockCore.SetBounds(0, [int][Math]::Round(228 * $homeScaleY), $fullHomeWidth, $homePrimaryH)
+
+        # Section: Firmware Upload & Tuning
+        $lblFirmware.SetBounds(0, [int][Math]::Round(4 * $homeScaleY), $fullHomeWidth, $homeLabelH)
+        $btnAuto.SetBounds(0, [int][Math]::Round(24 * $homeScaleY), $fullHomeWidth, $homePrimaryH)
+        $btnSTM.SetBounds(0, [int][Math]::Round(74 * $homeScaleY), $colWidth, $homePrimaryH)
+        $btnArduino.SetBounds($colWidth + $colGap, [int][Math]::Round(74 * $homeScaleY), $colWidth, $homePrimaryH)
+
+        # Section: CNC Macro & Config Deployment
+        $lblMacros.SetBounds(0, [int][Math]::Round(132 * $homeScaleY), $fullHomeWidth, $homeLabelH)
+        $btnPokeys.SetBounds(0, [int][Math]::Round(152 * $homeScaleY), $colWidth, $homeMacroH)
+        $btnMachMacro.SetBounds($colWidth + $colGap, [int][Math]::Round(152 * $homeScaleY), $colWidth, $homeMacroH)
+        $btnUCCNC.SetBounds(0, [int][Math]::Round(198 * $homeScaleY), $colWidth, $homeMacroH)
+        $btnLinuxCNC.SetBounds($colWidth + $colGap, [int][Math]::Round(198 * $homeScaleY), $colWidth, $homeMacroH)
+        $btnCentroid.SetBounds(0, [int][Math]::Round(244 * $homeScaleY), $colWidth, $homeMacroH)
+
+        # Section: System
+        $btnUpdate.SetBounds($colWidth + $colGap, [int][Math]::Round(244 * $homeScaleY), $colWidth, $homeMacroH)
+        $btnLockCore.SetBounds(0, [int][Math]::Round(292 * $homeScaleY), $fullHomeWidth, $homeMacroH)
         $btnDecodePayloads.SetBounds(0, [int][Math]::Round(338 * $homeScaleY), $fullHomeWidth, $homeCompactH)
-        $btnDevAccess.SetBounds(0, [int][Math]::Round(352 * $homeScaleY), $fullHomeWidth, $homeDevH)
+        $btnDevAccess.SetBounds(0, [int][Math]::Round(376 * $homeScaleY), $fullHomeWidth, $homeDevH)
 
         $step1ScaleY = [double]$panelStm32Step1.ClientSize.Height / 344.0
         $fullStep1Width = $panelStm32Step1.ClientSize.Width

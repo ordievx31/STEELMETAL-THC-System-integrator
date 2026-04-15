@@ -1,0 +1,32 @@
+# Local runtime artifacts
+logs/
+secrets/
+.release-local.ps1
+
+# Editor and OS noise
+.vs/
+.vscode/
+*.user
+*.suo
+Thumbs.db
+Desktop.ini
+
+# Local tool drop-ins and vendor binaries
+tools/*.exe
+tools/*.dll
+
+# Generated launchers and packages
+STEELMETTLE-THC-Systems-Integrator.exe
+STEELMETTLE_THC_Systems_Integrator_Setup.exe
+
+# Build outputs
+publish/
+build_temp/
+
+# Never publish license payloads from the source workspace
+licenses/dev.license.json
+licenses/user.license.json
+
+# Private firmware source - tracked in separate repos
+Arduino/
+STM32/

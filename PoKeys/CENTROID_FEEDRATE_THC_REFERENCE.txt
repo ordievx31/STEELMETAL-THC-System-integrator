@@ -1,0 +1,250 @@
+; =============================================================================
+; CENTROID ACORN CNC12 STEELMETTLE THC Feedrate Bus Reference
+; =============================================================================
+; This file provides a TEMPLATE for implementing the 8-bit parallel feedrate
+; bus on a Centroid Acorn CNC controller running CNC12.
+;
+; IMPORTANT: This is a reference template, not a drop-in macro.
+; Centroid Acorn hardware varies by revision (rev4, AcornSix) and the CNC12
+; PLC programming interface requires configuration specific to your setup.
+; Use this as a starting point and adapt to your specific hardware.
+;
+; APPROACH: Custom M-function macro that reads the current feedrate from
+; CNC12 system variables, encodes it as an 8-bit value, and sets/clears
+; Acorn digital outputs to transmit the feedrate to the THC Arduino.
+;
+; =============================================================================
+; ACORN HARDWARE NOTES
+; =============================================================================
+;
+; Acorn Digital Outputs:
+;   - Acorn rev4 has open-collector outputs on H2/H3 connectors
+;   - Outputs SINK current (pull to GND when active), not push HIGH
+;   - Requires external pull-up resistor (100-470 ohm to 5V)
+;   - This means: Output ON = pin pulled LOW, Output OFF = pin HIGH (pulled up)
+;   - The Arduino input logic is INVERTED from typical TTL:
+;     Acorn Output ON  -> Arduino sees LOW  (0)
+;     Acorn Output OFF -> Arduino sees HIGH (1)
+;   - Account for this inversion in the Arduino firmware or in the bit encoding
+;
+; For expansion I/O (more than the base Acorn outputs):
+;   - DC3IOB daughter board adds additional I/O
+;   - 8-relay module adds 8 relay outputs
+;   - External breakout boards (cnc4pc C86, etc.)
+;
+; Signal Levels:
+;   - Acorn screw terminal outputs: open-collector, user-supplied pull-up voltage
+;   - Recommended: 5V pull-up with 100 ohm resistor per output
+;   - Arduino input reads the pull-up voltage when Acorn output is OFF
+;   - Use with Arduino internal pull-ups DISABLED (external pull-up only)
+;
+; =============================================================================
+; CNC12 SYSTEM VARIABLES FOR FEEDRATE
+; =============================================================================
+;
+; CNC12 provides system variables accessible in parametric G-code:
+;
+;   #4001 = Active feedrate (F-word value in current units)
+;   #4101 = Feedrate override percentage (0-200%)
+;
+; Effective feedrate = #4001 * (#4101 / 100)
+;
+; To read these in an M-function macro:
+;   #100 = #4001          ; Read programmed feedrate
+;   #101 = #4101          ; Read feed override percentage
+;   #102 = #100 * #101    ; Effective feedrate * 100
+;   #102 = #102 / 100     ; Effective feedrate
+;
+; =============================================================================
+; SAMPLE M-FUNCTION MACRO (mfunc99.cnc)
+; =============================================================================
+; Save as: C:\cncm\mfunc99.cnc (or your CNC12 install path)
+; Call from G-code: M99 (triggers this macro each time)
+; Or call from PLC stage for continuous background updates
+;
+; NOTE: CNC12 parametric programming syntax varies by version.
+; Verify syntax against your CNC12 operator manual.
+;
+; --- Begin sample macro code ---
+;
+; ; STEELMETTLE THC Feedrate Bus Output
+; ; Reads feedrate, encodes as 8-bit, outputs to Acorn digital outputs
+;
+; ; Configuration
+; #110 = 500.0         ; Max feedrate (units/min) - adjust for your machine
+; #111 = 1             ; First Acorn output number for data bit 0
+; ;                    ; Outputs #111 through #111+7 = data bits 0-7
+; ;                    ; Output #111+8 = strobe
+;
+; ; Read effective feedrate
+; #100 = #4001         ; Programmed F value
+; #101 = #4101         ; Feed override percentage
+; #102 = [#100 * #101 / 100]  ; Effective feedrate
+;
+; ; Clamp to range
+; IF [#102 LT 0] THEN #102 = 0
+; IF [#102 GT #110] THEN #102 = #110
+;
+; ; Scale to 0-255
+; #103 = FIX[#102 / #110 * 255]
+;
+; ; Extract and output each bit
+; ; Bit 0 (LSB)
+; #120 = #103 AND 1
+; IF [#120 EQ 1] THEN M62 P[#111]     ; Set output ON (async, no motion wait)
+; IF [#120 EQ 0] THEN M63 P[#111]     ; Set output OFF
+;
+; ; Bit 1
+; #120 = [#103 / 2] AND 1
+; IF [#120 EQ 1] THEN M62 P[#111 + 1]
+; IF [#120 EQ 0] THEN M63 P[#111 + 1]
+;
+; ; Bit 2
+; #120 = [#103 / 4] AND 1
+; IF [#120 EQ 1] THEN M62 P[#111 + 2]
+; IF [#120 EQ 0] THEN M63 P[#111 + 2]
+;
+; ; Bit 3
+; #120 = [#103 / 8] AND 1
+; IF [#120 EQ 1] THEN M62 P[#111 + 3]
+; IF [#120 EQ 0] THEN M63 P[#111 + 3]
+;
+; ; Bit 4
+; #120 = [#103 / 16] AND 1
+; IF [#120 EQ 1] THEN M62 P[#111 + 4]
+; IF [#120 EQ 0] THEN M63 P[#111 + 4]
+;
+; ; Bit 5
+; #120 = [#103 / 32] AND 1
+; IF [#120 EQ 1] THEN M62 P[#111 + 5]
+; IF [#120 EQ 0] THEN M63 P[#111 + 5]
+;
+; ; Bit 6
+; #120 = [#103 / 64] AND 1
+; IF [#120 EQ 1] THEN M62 P[#111 + 6]
+; IF [#120 EQ 0] THEN M63 P[#111 + 6]
+;
+; ; Bit 7 (MSB)
+; #120 = [#103 / 128] AND 1
+; IF [#120 EQ 1] THEN M62 P[#111 + 7]
+; IF [#120 EQ 0] THEN M63 P[#111 + 7]
+;
+; ; Strobe pulse (output #111+8)
+; M63 P[#111 + 8]     ; Ensure strobe LOW
+; G4 P0.001            ; 1ms dwell
+; M62 P[#111 + 8]     ; Strobe HIGH (rising edge latches data)
+; G4 P0.002            ; 2ms pulse
+; M63 P[#111 + 8]     ; Strobe LOW
+;
+; --- End sample macro code ---
+;
+; =============================================================================
+; ALTERNATIVE: PLC BACKGROUND IMPLEMENTATION
+; =============================================================================
+;
+; For continuous feedrate updates (recommended for real-time THC operation),
+; the feedrate output should run in the CNC12 PLC background program rather
+; than as an M-function that must be called from G-code.
+;
+; CNC12 PLC programs (.src files) use Centroid's PLC language:
+;   - Located in C:\cncm\ (mill) or C:\cncl\ (lathe)
+;   - Filename: plc_prog.src (compiled to plc_prog.bin)
+;   - Runs continuously in background at ~10ms cycle time
+;
+; PLC variables for feedrate access:
+;   SV_PC_FEEDRATE       ; Current programmed feedrate
+;   SV_FEEDRATE_OVERRIDE ; Feed override percentage
+;   SV_MACHINE_STATE     ; Machine state flags
+;
+; PLC output control:
+;   SET_OUTPUT(n)        ; Turn output n ON
+;   CLEAR_OUTPUT(n)      ; Turn output n OFF
+;
+; CAUTION: Modifying plc_prog.src requires recompilation with Centroid's
+; PLC compiler. Back up the original file before making changes.
+; Contact Centroid support or a qualified integrator for PLC modifications.
+;
+; =============================================================================
+; ACORN OUTPUT PIN MAPPING
+; =============================================================================
+;
+; Acorn rev4 available outputs (check your specific board):
+;   OUT1-OUT4:  Connector H2 (step/dir shared, may not be available)
+;   OUT5-OUT8:  Connector H3 (auxiliary outputs)
+;   OUT9-OUT12: Relay module outputs (if 8-relay module installed)
+;
+; Recommended: Use OUT5-OUT12 (H3 aux + relay) for feedrate bus
+; This avoids conflicts with step/direction signals on H2
+;
+; For AcornSix: Additional outputs available on H4 connector
+;
+; IMPORTANT: Verify output numbers against your CNC12 I/O diagnostic screen:
+;   CNC12 > F5 (Diagnostics) > PLC I/O
+;   Toggle outputs and verify the correct physical pins respond
+;
+; =============================================================================
+; WIRING: Acorn -> Arduino (with open-collector pull-up)
+; =============================================================================
+;
+;                    5V (from Arduino or external supply)
+;                     |
+;                  [100R] pull-up resistor (100-470 ohm)
+;                     |
+;  Acorn Output ------+-------> Arduino Digital Input (D3-D10, D2)
+;                     |
+;                   (Acorn sinks to GND when output is ON)
+;
+; For each of the 9 signals (8 data + 1 strobe):
+;   Acorn OUT[n]  + 100R pull-up to 5V -> Arduino D3  (bit 0)
+;   Acorn OUT[n+1] + 100R pull-up       -> Arduino D4  (bit 1)
+;   Acorn OUT[n+2] + 100R pull-up       -> Arduino D5  (bit 2)
+;   Acorn OUT[n+3] + 100R pull-up       -> Arduino D6  (bit 3)
+;   Acorn OUT[n+4] + 100R pull-up       -> Arduino D7  (bit 4)
+;   Acorn OUT[n+5] + 100R pull-up       -> Arduino D8  (bit 5)
+;   Acorn OUT[n+6] + 100R pull-up       -> Arduino D9  (bit 6)
+;   Acorn OUT[n+7] + 100R pull-up       -> Arduino D10 (bit 7)
+;   Acorn OUT[n+8] + 100R pull-up       -> Arduino D2  (strobe)
+;   Acorn GND                           -> Arduino GND
+;
+; LOGIC INVERSION NOTE:
+;   Because Acorn outputs are open-collector (active LOW):
+;   - When Acorn output is ON:  pin is pulled LOW  -> Arduino reads 0
+;   - When Acorn output is OFF: pin is pulled HIGH -> Arduino reads 1
+;   - Invert in the Arduino ISR: feedrateByte = ~rawByte & 0xFF
+;   - OR invert in the macro: swap SET/CLEAR for each bit
+;
+; =============================================================================
+; TESTING
+; =============================================================================
+;
+; 1. Verify Acorn outputs with CNC12 PLC I/O diagnostic screen
+; 2. Use a multimeter to confirm pull-up voltage on each output
+; 3. Toggle outputs manually and check Arduino serial output
+; 4. Run a simple G-code program with known feedrate:
+;    G1 X10 F200 M99    ; Move at F200, trigger feedrate output
+;    G1 X0  F500 M99    ; Move at F500, trigger feedrate output
+; 5. Verify Arduino reports correct feedrate byte values
+;
+; =============================================================================
+; RESOURCES
+; =============================================================================
+;
+; Centroid Acorn Documentation:
+;   https://centroidcncforum.com/viewtopic.php?f=60&t=3397
+;
+; CNC12 Mill Operator Manual:
+;   https://www.centroidcnc.com/centroid_diy/downloads/operator_manuals/
+;     centroid-cnc12-mill-operator-manual.pdf
+;
+; Acorn Installation Manual:
+;   https://www.centroidcnc.com/centroid_diy/downloads/acorn_documentation/
+;     centroid_acorn_install_manual.pdf
+;
+; CNC12 PLC I/O Diagnostic Screen:
+;   https://www.centroidcnc.com/centroid_diy/downloads/acorn_documentation/
+;     cnc12_PLC_diagnostic_screen.pdf
+;
+; Centroid Support Forum:
+;   https://centroidcncforum.com/viewforum.php?f=60
+;
+; =============================================================================

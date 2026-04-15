@@ -1,0 +1,138 @@
+// =============================================================================
+// UCCNC STEELMETTLE THC Feedrate Integration Macro (Macroloop)
+// =============================================================================
+// This file runs continuously via the UCCNC Macro Loop Plugin.
+// It reads the current feedrate, encodes it as an 8-bit value (0-255),
+// and outputs it on 9 digital pins (8 data + 1 strobe) for the
+// STEELMETTLE THC Arduino to latch via ISR.
+//
+// INSTALLATION:
+// 1. Save this file as: C:\UCCNC\Profiles\Macro_Profiles\Macroloop\Macroloop.txt
+//    (Or your UCCNC profile's Macroloop folder)
+// 2. In UCCNC, enable the Macro Loop Plugin:
+//    Configure > General Settings > Plugins > Enable "Macroloop"
+// 3. Set the loop interval to 50ms (20 Hz update rate)
+// 4. Configure 9 UCCNC output pins in Ports & Pins for the feedrate bus
+//
+// FEEDRATE ENCODING:
+// Feedrate is converted to 8-bit value (0-255) where:
+//   0 = 0% of max feedrate (idle/no feed)
+//   255 = 100% of max feedrate (max allowed)
+// Effective feedrate = programmed F-word * (feed override % / 100)
+// Default max feedrate = 500 units/min (adjust below to match your machine)
+//
+// UCCNC OUTPUT PIN MAPPING:
+// Configure these in UCCNC Ports & Pins to match your breakout board.
+// The numbers below are UCCNC output port numbers (not physical pin numbers).
+// Adjust to match your BOB wiring.
+//
+// =============================================================================
+
+// Configuration: UCCNC output numbers for feedrate bus
+// Change these to match your breakout board output assignments
+int OUT_FD0 = 1;    // UCCNC Output 1 -> Arduino D3 (feedrate bit 0, LSB)
+int OUT_FD1 = 2;    // UCCNC Output 2 -> Arduino D4 (feedrate bit 1)
+int OUT_FD2 = 3;    // UCCNC Output 3 -> Arduino D5 (feedrate bit 2)
+int OUT_FD3 = 4;    // UCCNC Output 4 -> Arduino D6 (feedrate bit 3)
+int OUT_FD4 = 5;    // UCCNC Output 5 -> Arduino D7 (feedrate bit 4)
+int OUT_FD5 = 6;    // UCCNC Output 6 -> Arduino D8 (feedrate bit 5)
+int OUT_FD6 = 7;    // UCCNC Output 7 -> Arduino D9 (feedrate bit 6)
+int OUT_FD7 = 8;    // UCCNC Output 8 -> Arduino D10 (feedrate bit 7, MSB)
+int OUT_STROBE = 9;  // UCCNC Output 9 -> Arduino D2 (ISR strobe, rising edge)
+
+// Feedrate mapping (edit to match your machine's max feedrate)
+double MAX_FEEDRATE = 500.0;  // Max feedrate in units/min (0-255 maps to 0-MAX)
+
+// =============================================================================
+// Read current effective feedrate (F-word * feed rate override)
+// =============================================================================
+double programmedFeed = exec.Getfeed();
+double feedOverride = AS3.Getfro();  // Feed rate override percentage (0-200)
+double effectiveFeed = programmedFeed * (feedOverride / 100.0);
+
+// Clamp to valid range
+if (effectiveFeed < 0) effectiveFeed = 0;
+if (effectiveFeed > MAX_FEEDRATE) effectiveFeed = MAX_FEEDRATE;
+
+// Map to 8-bit value (0-255)
+int feedrateByte = (int)Math.Round((effectiveFeed / MAX_FEEDRATE) * 255.0);
+if (feedrateByte > 255) feedrateByte = 255;
+if (feedrateByte < 0) feedrateByte = 0;
+
+// =============================================================================
+// Write 8 data bits to UCCNC outputs
+// =============================================================================
+int[] dataPins = new int[] { OUT_FD0, OUT_FD1, OUT_FD2, OUT_FD3,
+                              OUT_FD4, OUT_FD5, OUT_FD6, OUT_FD7 };
+
+for (int i = 0; i < 8; i++)
+{
+    if ((feedrateByte & (1 << i)) != 0)
+    {
+        exec.Setoutpin(dataPins[i], 0);  // Set output HIGH (port 0, pin N)
+    }
+    else
+    {
+        exec.Clroutpin(dataPins[i], 0);  // Set output LOW  (port 0, pin N)
+    }
+}
+
+// =============================================================================
+// Pulse STROBE to latch data (rising edge triggers Arduino ISR)
+// =============================================================================
+exec.Clroutpin(OUT_STROBE, 0);   // Ensure STROBE is LOW before pulse
+exec.Wait(1);                     // 1ms stabilization
+exec.Setoutpin(OUT_STROBE, 0);   // STROBE HIGH (rising edge latches data)
+exec.Wait(2);                     // 2ms pulse width
+exec.Clroutpin(OUT_STROBE, 0);   // STROBE LOW
+
+// =============================================================================
+// INSTALLATION INSTRUCTIONS (manual setup if not using integrator)
+// =============================================================================
+//
+// 1. LOCATE UCCNC MACROLOOP FOLDER:
+//    Default: C:\UCCNC\Profiles\Macro_Profiles\Macroloop\
+//    Some setups: C:\UCCNC\Profiles\[YourProfile]\Macroloop\
+//
+// 2. SAVE THIS FILE as "Macroloop.txt" in that folder
+//    If a Macroloop.txt already exists, merge the content or rename
+//    the original as a backup first.
+//
+// 3. ENABLE MACRO LOOP PLUGIN:
+//    a) Open UCCNC
+//    b) Go to Configure > General Settings > Plugins
+//    c) Enable "Macroloop" plugin
+//    d) Set loop interval to 50ms (20 Hz)
+//    e) Click OK
+//
+// 4. CONFIGURE OUTPUT PINS:
+//    a) Go to Configure > Ports and Pins > Output Signals
+//    b) Map UCCNC outputs 1-9 to your breakout board pins:
+//       Output 1-8: Feedrate data bits D0-D7
+//       Output 9:   Strobe signal
+//    c) Verify the pin numbers match your BOB wiring
+//
+// 5. WIRING (BOB to Arduino):
+//    BOB Output for D0  -> Arduino D3  (feedrate bit 0)
+//    BOB Output for D1  -> Arduino D4  (feedrate bit 1)
+//    BOB Output for D2  -> Arduino D5  (feedrate bit 2)
+//    BOB Output for D3  -> Arduino D6  (feedrate bit 3)
+//    BOB Output for D4  -> Arduino D7  (feedrate bit 4)
+//    BOB Output for D5  -> Arduino D8  (feedrate bit 5)
+//    BOB Output for D6  -> Arduino D9  (feedrate bit 6)
+//    BOB Output for D7  -> Arduino D10 (feedrate bit 7)
+//    BOB Output for STR -> Arduino D2  (strobe/interrupt)
+//    BOB GND            -> Arduino GND
+//
+// 6. SIGNAL LEVELS:
+//    Most UCCNC breakout boards (UC100, UC300ETH, UC400ETH, AXBB-E)
+//    output 5V logic which the Arduino reads directly.
+//    If your BOB outputs 3.3V, the Arduino Mega accepts it as HIGH.
+//
+// 7. TESTING:
+//    a) Start UCCNC with Macroloop enabled
+//    b) Jog or run a program with feedrate set (e.g., F200)
+//    c) Monitor Arduino serial output for feedrate byte values
+//    d) Verify byte scales correctly: F0=0, F250=128, F500=255
+//
+// =============================================================================
