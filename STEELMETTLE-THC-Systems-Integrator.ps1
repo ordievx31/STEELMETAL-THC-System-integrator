@@ -3173,8 +3173,31 @@ function Build-And-Flash-Arduino {
     Log 'Starting STEELMETTLE THC Core build + flash flow'
     $arduino = Find-Executable 'arduino-cli.exe'
     if (-not $arduino) {
-        Log 'ERROR: arduino-cli.exe not found. Place it in this folder or tools/.'
-        throw 'arduino-cli.exe missing.'
+        Log 'arduino-cli.exe not found - attempting auto-download...'
+        Set-UiStage 'Downloading arduino-cli (first run)...' 62
+        try {
+            $cliDest = Join-Path $toolsDir 'arduino-cli.exe'
+            if (-not (Test-Path $toolsDir)) { New-Item -ItemType Directory -Path $toolsDir | Out-Null }
+            $zipUrl = 'https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Windows_64bit.zip'
+            $zipTmp = Join-Path $env:TEMP 'arduino-cli-dl.zip'
+            (New-Object System.Net.WebClient).DownloadFile($zipUrl, $zipTmp)
+            Add-Type -Assembly 'System.IO.Compression.FileSystem'
+            $arc = [System.IO.Compression.ZipFile]::OpenRead($zipTmp)
+            $entry = $arc.Entries | Where-Object { $_.Name -ieq 'arduino-cli.exe' } | Select-Object -First 1
+            if ($entry) {
+                [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $cliDest, $true)
+            }
+            $arc.Dispose()
+            Remove-Item $zipTmp -Force -ErrorAction SilentlyContinue
+            $arduino = Find-Executable 'arduino-cli.exe'
+            Log "arduino-cli.exe auto-downloaded to: $cliDest"
+        } catch {
+            Log "Auto-download failed: $_"
+        }
+        if (-not $arduino) {
+            Log 'ERROR: arduino-cli.exe not found and auto-download failed.'
+            throw 'arduino-cli.exe missing. Check your internet connection or place arduino-cli.exe in the tools folder.'
+        }
     }
 
     $arduinoDir = Join-Path $baseDir 'Arduino'
