@@ -731,15 +731,21 @@ if ($LASTEXITCODE -gt 7) {
     throw "Copy failed with robocopy code $LASTEXITCODE"
 }
 
-# 2b) Inject vendor DLLs stripped by public-github-copy (required at runtime)
-$pokeysDllSrc = Join-Path $baseDir 'tools\PoKeysDevice_DLL.dll'
-if (Test-Path $pokeysDllSrc) {
-    $toolsDst = Join-Path $publicBinaryDir 'tools'
-    Ensure-Directory $toolsDst
-    Copy-Item $pokeysDllSrc (Join-Path $toolsDst 'PoKeysDevice_DLL.dll') -Force
-    Log 'Injected tools\PoKeysDevice_DLL.dll into binary-only output.'
-} else {
-    Log 'WARNING: tools\PoKeysDevice_DLL.dll not found in source - skipping DLL injection.'
+# 2b) Inject vendor binaries stripped by public-github-copy (required at runtime)
+$toolsDst = Join-Path $publicBinaryDir 'tools'
+Ensure-Directory $toolsDst
+$injectFiles = @(
+    'PoKeysDevice_DLL.dll',
+    'arduino-cli.exe'
+)
+foreach ($injectFile in $injectFiles) {
+    $src = Join-Path $baseDir "tools\$injectFile"
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $toolsDst $injectFile) -Force
+        Log "Injected tools\$injectFile into binary-only output."
+    } else {
+        Log "WARNING: tools\$injectFile not found in source - skipping injection."
+    }
 }
 
 # 2c) Retarget updater config for the public download repository
